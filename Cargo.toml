@@ -1,0 +1,9 @@
+[package]
+name = "authzen-rs"
+version = "0.1.0"
+edition = "2024"
+authors = ["cooronx 2197083441@qq.com"]
+description = "A Rust SDK for the OpenID AuthZEN Authorization API"
+license = "MIT"
+
+[dependencies]
