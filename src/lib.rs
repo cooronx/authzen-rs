@@ -9,6 +9,8 @@ pub mod prelude;
 
 #[cfg(feature = "client")]
 pub mod client;
+#[cfg(feature = "server")]
+pub mod server;
 
 pub use error::{AuthZenError, ValidationError};
 pub use model::*;

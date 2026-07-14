@@ -12,7 +12,7 @@ repository = "https://github.com/cooronx/authzen-rs.git"
 [features]
 default = ["client", "rustls-tls"]
 client = ["dep:async-trait", "dep:futures-util", "dep:reqwest", "dep:tokio"]
-server = []
+server = ["dep:async-trait"]
 tower-pep = []
 tower-pdp = []
 rustls-tls = ["client", "reqwest/rustls-tls"]
