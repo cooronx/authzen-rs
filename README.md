@@ -125,9 +125,7 @@ configurable.
 |---|---|
 | `client` | Async AuthZEN HTTPS client and strict metadata discovery |
 | `server` | PDP and Search implementation traits |
-| `tower-pep` | Authorization middleware for protected applications |
-| `tower-pdp` | AuthZEN HTTP endpoint services for PDP applications |
-| `tower` | Enables both Tower integrations |
+| `tower` | Tower integration: PEP middleware with `client`, PDP HTTP services with `server` |
 | `rustls-tls` | Rustls transport; enabled by default |
 | `native-tls` | Native TLS transport |
 | `tracing` | Internal diagnostics without exposing PDP errors to clients |

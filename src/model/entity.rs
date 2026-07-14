@@ -63,7 +63,7 @@ impl Subject {
         require(&self.subject_type, "subject.type")
     }
 
-    #[cfg(feature = "tower-pdp")]
+    #[cfg(all(feature = "tower", feature = "server"))]
     pub(crate) fn ignore_id(&mut self) {
         self.id = None;
     }
@@ -126,7 +126,7 @@ impl Resource {
         require(&self.resource_type, "resource.type")
     }
 
-    #[cfg(feature = "tower-pdp")]
+    #[cfg(all(feature = "tower", feature = "server"))]
     pub(crate) fn ignore_id(&mut self) {
         self.id = None;
     }

@@ -1,4 +1,4 @@
-#![cfg(feature = "tower-pdp")]
+#![cfg(all(feature = "tower", feature = "server"))]
 
 use std::{
     convert::Infallible,

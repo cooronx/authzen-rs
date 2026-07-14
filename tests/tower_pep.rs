@@ -1,4 +1,4 @@
-#![cfg(feature = "tower-pep")]
+#![cfg(all(feature = "tower", feature = "client"))]
 
 use std::sync::{
     Arc,

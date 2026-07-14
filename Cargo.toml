@@ -1,6 +1,6 @@
 [package]
 name = "authzen-rs"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.85"
 autoexamples = false
@@ -16,16 +16,13 @@ categories = ["authentication", "web-programming"]
 default = ["client", "rustls-tls"]
 client = ["dep:async-trait", "dep:futures-util", "dep:reqwest", "dep:tokio"]
 server = ["dep:async-trait"]
-tower-core = [
+tower = [
     "dep:bytes",
     "dep:http",
     "dep:http-body",
     "dep:http-body-util",
     "dep:tower",
 ]
-tower-pep = ["client", "tower-core"]
-tower-pdp = ["server", "tower-core"]
-tower = ["tower-pep", "tower-pdp"]
 rustls-tls = ["client", "reqwest/rustls-tls"]
 native-tls = ["client", "reqwest/native-tls"]
 tracing = ["dep:tracing"]
@@ -64,8 +61,8 @@ required-features = ["server"]
 
 [[example]]
 name = "tower_pep"
-required-features = ["tower-pep"]
+required-features = ["client", "tower"]
 
 [[example]]
 name = "tower_pdp"
-required-features = ["tower-pdp"]
+required-features = ["server", "tower"]

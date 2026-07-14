@@ -184,7 +184,7 @@ impl SubjectSearchRequest {
         self.action.as_ref().unwrap().validate()?;
         self.resource.as_ref().unwrap().validate_identified()
     }
-    #[cfg(feature = "tower-pdp")]
+    #[cfg(all(feature = "tower", feature = "server"))]
     pub(crate) fn normalize_query(mut self) -> Self {
         self.subject.as_mut().unwrap().ignore_id();
         self
@@ -246,7 +246,7 @@ impl ResourceSearchRequest {
         self.action.as_ref().unwrap().validate()?;
         self.resource.as_ref().unwrap().validate_query()
     }
-    #[cfg(feature = "tower-pdp")]
+    #[cfg(all(feature = "tower", feature = "server"))]
     pub(crate) fn normalize_query(mut self) -> Self {
         self.resource.as_mut().unwrap().ignore_id();
         self

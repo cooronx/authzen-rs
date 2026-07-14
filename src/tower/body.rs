@@ -1,7 +1,7 @@
 use std::convert::Infallible;
 
 use bytes::Bytes;
-#[cfg(feature = "tower-pep")]
+#[cfg(feature = "client")]
 use http_body::Body;
 use http_body_util::{BodyExt, Full, combinators::UnsyncBoxBody};
 
@@ -14,7 +14,7 @@ pub fn full(value: impl Into<Bytes>) -> AuthZenBody {
         .boxed_unsync()
 }
 
-#[cfg(feature = "tower-pep")]
+#[cfg(feature = "client")]
 pub fn boxed<B>(body: B) -> AuthZenBody
 where
     B: Body<Data = Bytes> + Send + 'static,

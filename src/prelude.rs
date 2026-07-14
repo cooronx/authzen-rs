@@ -5,5 +5,5 @@ pub use crate::model::*;
 pub use crate::client::{ApiEndpoint, AuthZenClient, AuthZenClientBuilder, Authorizer};
 #[cfg(feature = "server")]
 pub use crate::server::{ActionSearch, PolicyDecisionPoint, ResourceSearch, SubjectSearch};
-#[cfg(feature = "tower-pep")]
+#[cfg(all(feature = "tower", feature = "client"))]
 pub use crate::tower::{AuthZenLayer, RequestMappingError};
