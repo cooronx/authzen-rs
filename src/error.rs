@@ -28,6 +28,9 @@ impl ValidationError {
 pub enum AuthZenError {
     #[error("invalid AuthZEN request: {0}")]
     InvalidRequest(#[from] ValidationError),
+    #[cfg(feature = "client")]
+    #[error("HTTP transport error: {0}")]
+    Transport(#[source] reqwest::Error),
     #[error("request timed out")]
     Timeout,
     #[error("metadata discovery failed: {0}")]

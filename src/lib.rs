@@ -7,5 +7,8 @@ pub mod error;
 pub mod model;
 pub mod prelude;
 
+#[cfg(feature = "client")]
+pub mod client;
+
 pub use error::{AuthZenError, ValidationError};
 pub use model::*;
