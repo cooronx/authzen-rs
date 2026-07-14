@@ -8,6 +8,9 @@ authors = ["cooronx 2197083441@qq.com"]
 description = "A Rust SDK for the OpenID AuthZEN Authorization API 1.0"
 license = "MIT"
 repository = "https://github.com/cooronx/authzen-rs.git"
+readme = "README.md"
+keywords = ["authzen", "authorization", "pdp", "pep", "tower"]
+categories = ["authentication", "web-programming"]
 
 [features]
 default = ["client", "rustls-tls"]
@@ -46,3 +49,23 @@ url = { version = "2.5.7", features = ["serde"] }
 [dev-dependencies]
 tokio = { version = "1.48", features = ["macros", "rt-multi-thread"] }
 tower = { version = "0.5.3", features = ["util"] }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[[example]]
+name = "client"
+required-features = ["client"]
+
+[[example]]
+name = "custom_pdp"
+required-features = ["server"]
+
+[[example]]
+name = "tower_pep"
+required-features = ["tower-pep"]
+
+[[example]]
+name = "tower_pdp"
+required-features = ["tower-pdp"]
