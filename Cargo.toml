@@ -2,9 +2,21 @@
 name = "authzen-rs"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
+autoexamples = false
 authors = ["cooronx 2197083441@qq.com"]
 description = "A Rust SDK for the OpenID AuthZEN Authorization API"
 license = "MIT"
 repository = "https://github.com/cooronx/authzen-rs.git"
 
+[features]
+default = []
+server = []
+tower-pep = []
+tower-pdp = []
+
 [dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+thiserror = "2.0.18"
+url = { version = "2.5.7", features = ["serde"] }

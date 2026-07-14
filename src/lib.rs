@@ -1,14 +1,11 @@
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
+//! Rust SDK for the OpenID AuthZEN Authorization API 1.0.
+//!
+//! Protocol types are always available. HTTP client, PDP server traits, and
+//! Tower integrations are controlled by Cargo features.
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub mod error;
+pub mod model;
+pub mod prelude;
 
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
+pub use error::{AuthZenError, ValidationError};
+pub use model::*;
