@@ -11,6 +11,8 @@ pub mod prelude;
 pub mod client;
 #[cfg(feature = "server")]
 pub mod server;
+#[cfg(feature = "tower-pep")]
+pub mod tower;
 
 pub use error::{AuthZenError, ValidationError};
 pub use model::*;
