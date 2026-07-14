@@ -11,7 +11,7 @@ pub mod prelude;
 pub mod client;
 #[cfg(feature = "server")]
 pub mod server;
-#[cfg(feature = "tower-pep")]
+#[cfg(any(feature = "tower-pep", feature = "tower-pdp"))]
 pub mod tower;
 
 pub use error::{AuthZenError, ValidationError};

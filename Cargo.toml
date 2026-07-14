@@ -21,7 +21,8 @@ tower-core = [
     "dep:tower",
 ]
 tower-pep = ["client", "tower-core"]
-tower-pdp = []
+tower-pdp = ["server", "tower-core"]
+tower = ["tower-pep", "tower-pdp"]
 rustls-tls = ["client", "reqwest/rustls-tls"]
 native-tls = ["client", "reqwest/native-tls"]
 tracing = ["dep:tracing"]
