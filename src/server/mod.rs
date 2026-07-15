@@ -66,6 +66,13 @@ fn evaluation_failure() -> Decision {
 #[async_trait]
 pub trait SubjectSearch: Clone + Send + Sync + 'static {
     type Error: PdpError;
+
+    /// Returns authorized subjects matching the request.
+    ///
+    /// When `request.page().token()` is present, the adapter must bind that
+    /// opaque token to the original query and reject changes to every request
+    /// value other than the token. The generic server transport deliberately
+    /// does not retain pagination sessions.
     async fn search_subjects(
         &self,
         request: SubjectSearchRequest,
@@ -75,6 +82,13 @@ pub trait SubjectSearch: Clone + Send + Sync + 'static {
 #[async_trait]
 pub trait ResourceSearch: Clone + Send + Sync + 'static {
     type Error: PdpError;
+
+    /// Returns authorized resources matching the request.
+    ///
+    /// When `request.page().token()` is present, the adapter must bind that
+    /// opaque token to the original query and reject changes to every request
+    /// value other than the token. The generic server transport deliberately
+    /// does not retain pagination sessions.
     async fn search_resources(
         &self,
         request: ResourceSearchRequest,
@@ -84,6 +98,13 @@ pub trait ResourceSearch: Clone + Send + Sync + 'static {
 #[async_trait]
 pub trait ActionSearch: Clone + Send + Sync + 'static {
     type Error: PdpError;
+
+    /// Returns authorized actions matching the request.
+    ///
+    /// When `request.page().token()` is present, the adapter must bind that
+    /// opaque token to the original query and reject changes to every request
+    /// value other than the token. The generic server transport deliberately
+    /// does not retain pagination sessions.
     async fn search_actions(
         &self,
         request: ActionSearchRequest,

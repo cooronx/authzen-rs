@@ -54,6 +54,68 @@ pub struct AuthZenClient {
     max_response_body_bytes: usize,
 }
 
+macro_rules! search_paginator {
+    ($name:ident, $request:ty, $result:ty, $search:ident) => {
+        /// Stateful Search pagination that keeps the initial query fixed and
+        /// changes only the opaque continuation token between requests.
+        #[must_use = "a paginator does not send a request until next_page is called"]
+        pub struct $name {
+            client: AuthZenClient,
+            request: $request,
+            finished: bool,
+        }
+
+        impl $name {
+            fn new(client: AuthZenClient, request: $request) -> Self {
+                Self {
+                    client,
+                    request,
+                    finished: false,
+                }
+            }
+
+            /// Returns the next page, or `None` after a response omits `page`
+            /// or supplies an empty `next_token`.
+            ///
+            /// A failed request does not advance the token, so callers may
+            /// retry by calling this method again.
+            pub async fn next_page(
+                &mut self,
+            ) -> Result<Option<SearchResponse<$result>>, AuthZenError> {
+                if self.finished {
+                    return Ok(None);
+                }
+                let response = self.client.$search(self.request.clone()).await?;
+                if let Some(token) = response.next_token() {
+                    self.request = self.request.continuation(token);
+                } else {
+                    self.finished = true;
+                }
+                Ok(Some(response))
+            }
+        }
+    };
+}
+
+search_paginator!(
+    SubjectSearchPaginator,
+    SubjectSearchRequest,
+    Subject,
+    search_subjects
+);
+search_paginator!(
+    ResourceSearchPaginator,
+    ResourceSearchRequest,
+    Resource,
+    search_resources
+);
+search_paginator!(
+    ActionSearchPaginator,
+    ActionSearchRequest,
+    Action,
+    search_actions
+);
+
 impl AuthZenClient {
     pub fn builder(policy_decision_point: impl Into<String>) -> AuthZenClientBuilder {
         AuthZenClientBuilder::new(policy_decision_point)
@@ -80,6 +142,18 @@ impl AuthZenClient {
         self.post(ApiEndpoint::SubjectSearch, &request).await
     }
 
+    /// Starts stateful Subject Search pagination.
+    ///
+    /// Continuation requests preserve the validated initial request and
+    /// replace only its opaque page token.
+    pub fn paginate_subjects(
+        &self,
+        request: SubjectSearchRequest,
+    ) -> Result<SubjectSearchPaginator, AuthZenError> {
+        request.validate()?;
+        Ok(SubjectSearchPaginator::new(self.clone(), request))
+    }
+
     pub async fn search_resources(
         &self,
         request: ResourceSearchRequest,
@@ -88,12 +162,36 @@ impl AuthZenClient {
         self.post(ApiEndpoint::ResourceSearch, &request).await
     }
 
+    /// Starts stateful Resource Search pagination.
+    ///
+    /// Continuation requests preserve the validated initial request and
+    /// replace only its opaque page token.
+    pub fn paginate_resources(
+        &self,
+        request: ResourceSearchRequest,
+    ) -> Result<ResourceSearchPaginator, AuthZenError> {
+        request.validate()?;
+        Ok(ResourceSearchPaginator::new(self.clone(), request))
+    }
+
     pub async fn search_actions(
         &self,
         request: ActionSearchRequest,
     ) -> Result<SearchResponse<Action>, AuthZenError> {
         request.validate()?;
         self.post(ApiEndpoint::ActionSearch, &request).await
+    }
+
+    /// Starts stateful Action Search pagination.
+    ///
+    /// Continuation requests preserve the validated initial request and
+    /// replace only its opaque page token.
+    pub fn paginate_actions(
+        &self,
+        request: ActionSearchRequest,
+    ) -> Result<ActionSearchPaginator, AuthZenError> {
+        request.validate()?;
+        Ok(ActionSearchPaginator::new(self.clone(), request))
     }
 
     async fn post<T: Serialize + ?Sized, R: DeserializeOwned>(
@@ -419,7 +517,275 @@ fn content_type_is_json(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        io::{BufRead, BufReader, Read, Write},
+        net::TcpListener,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            mpsc,
+        },
+        thread,
+    };
+
+    use serde_json::{Value, json};
+
     use super::*;
+
+    static NETWORK_TEST_IN_USE: AtomicBool = AtomicBool::new(false);
+
+    struct NetworkTestGuard;
+
+    impl NetworkTestGuard {
+        fn acquire() -> Self {
+            while NETWORK_TEST_IN_USE
+                .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+                .is_err()
+            {
+                thread::yield_now();
+            }
+            Self
+        }
+    }
+
+    impl Drop for NetworkTestGuard {
+        fn drop(&mut self) {
+            NETWORK_TEST_IN_USE.store(false, Ordering::Release);
+        }
+    }
+
+    fn test_client(endpoint: Url, kind: ApiEndpoint) -> AuthZenClient {
+        AuthZenClient {
+            http: Client::new(),
+            endpoints: HashMap::from([(kind, endpoint)]),
+            headers: HeaderMap::new(),
+            timeout: DEFAULT_TIMEOUT,
+            max_response_body_bytes: DEFAULT_MAX_BODY,
+        }
+    }
+
+    fn json_server(
+        responses: Vec<Value>,
+    ) -> (
+        NetworkTestGuard,
+        Url,
+        mpsc::Receiver<Value>,
+        thread::JoinHandle<()>,
+    ) {
+        let guard = NetworkTestGuard::acquire();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (sender, receiver) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            for response in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut content_length = 0;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line
+                        .strip_prefix("content-length:")
+                        .or_else(|| line.strip_prefix("Content-Length:"))
+                    {
+                        content_length = value.trim().parse().unwrap();
+                    }
+                }
+                let mut body = vec![0; content_length];
+                reader.read_exact(&mut body).unwrap();
+                sender.send(serde_json::from_slice(&body).unwrap()).unwrap();
+
+                let body = serde_json::to_vec(&response).unwrap();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .unwrap();
+                stream.write_all(&body).unwrap();
+            }
+        });
+        (
+            guard,
+            Url::parse(&format!("http://{address}/search")).unwrap(),
+            receiver,
+            handle,
+        )
+    }
+
+    #[tokio::test]
+    async fn resource_pagination_changes_only_the_token_and_stops_on_empty_token() {
+        let (_network, endpoint, requests, server) = json_server(vec![
+            json!({
+                "page": {"next_token": "next-1", "count": 1},
+                "results": [{"type": "document", "id": "1"}]
+            }),
+            json!({
+                "page": {"next_token": "", "count": 1},
+                "results": [{"type": "document", "id": "2"}]
+            }),
+        ]);
+        let client = test_client(endpoint, ApiEndpoint::ResourceSearch);
+        let request = ResourceSearchRequest::new(
+            Subject::new("user", "alice"),
+            Action::new("read"),
+            Resource::query("document"),
+        )
+        .with_context(serde_json::Map::from_iter([(
+            "tenant".into(),
+            json!("acme"),
+        )]))
+        .with_page(
+            crate::PageRequest::new()
+                .with_limit(25)
+                .with_property("sort", "name"),
+        );
+
+        let mut paginator = client.paginate_resources(request).unwrap();
+        assert_eq!(
+            paginator
+                .next_page()
+                .await
+                .unwrap()
+                .unwrap()
+                .results()
+                .len(),
+            1
+        );
+        assert_eq!(
+            paginator
+                .next_page()
+                .await
+                .unwrap()
+                .unwrap()
+                .results()
+                .len(),
+            1
+        );
+        assert!(paginator.next_page().await.unwrap().is_none());
+
+        let first = requests.recv().unwrap();
+        let second = requests.recv().unwrap();
+        let mut expected_second = first.clone();
+        expected_second["page"]["token"] = json!("next-1");
+        assert_eq!(second, expected_second);
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn resource_pagination_stops_when_the_response_has_no_page() {
+        let (_network, endpoint, requests, server) = json_server(vec![json!({
+            "results": [{"type": "document", "id": "1"}]
+        })]);
+        let client = test_client(endpoint, ApiEndpoint::ResourceSearch);
+        let request = ResourceSearchRequest::new(
+            Subject::new("user", "alice"),
+            Action::new("read"),
+            Resource::query("document"),
+        );
+
+        let mut paginator = client.paginate_resources(request).unwrap();
+        assert!(paginator.next_page().await.unwrap().is_some());
+        assert!(paginator.next_page().await.unwrap().is_none());
+
+        server.join().unwrap();
+        assert!(requests.recv().is_ok());
+        assert!(requests.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn subject_pagination_preserves_the_query_across_pages() {
+        let (_network, endpoint, requests, server) = json_server(vec![
+            json!({
+                "page": {"next_token": "subjects-2"},
+                "results": [{"type": "user", "id": "alice"}]
+            }),
+            json!({
+                "page": {"next_token": ""},
+                "results": [{"type": "user", "id": "bob"}]
+            }),
+        ]);
+        let client = test_client(endpoint, ApiEndpoint::SubjectSearch);
+        let request = SubjectSearchRequest::new(
+            Subject::query("user"),
+            Action::new("read"),
+            Resource::new("document", "1"),
+        )
+        .with_page(crate::PageRequest::new().with_limit(10));
+
+        let mut paginator = client.paginate_subjects(request).unwrap();
+        assert!(paginator.next_page().await.unwrap().is_some());
+        assert!(paginator.next_page().await.unwrap().is_some());
+        assert!(paginator.next_page().await.unwrap().is_none());
+
+        let first = requests.recv().unwrap();
+        let second = requests.recv().unwrap();
+        let mut expected_second = first.clone();
+        expected_second["page"]["token"] = json!("subjects-2");
+        assert_eq!(second, expected_second);
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn action_pagination_preserves_the_query_across_pages() {
+        let (_network, endpoint, requests, server) = json_server(vec![
+            json!({
+                "page": {"next_token": "actions-2"},
+                "results": [{"name": "read"}]
+            }),
+            json!({
+                "page": {"next_token": ""},
+                "results": [{"name": "write"}]
+            }),
+        ]);
+        let client = test_client(endpoint, ApiEndpoint::ActionSearch);
+        let request = ActionSearchRequest::new(
+            Subject::new("user", "alice"),
+            Resource::new("document", "1"),
+        )
+        .with_page(
+            crate::PageRequest::new()
+                .with_limit(10)
+                .with_property("order", "ascending"),
+        );
+
+        let mut paginator = client.paginate_actions(request).unwrap();
+        assert!(paginator.next_page().await.unwrap().is_some());
+        assert!(paginator.next_page().await.unwrap().is_some());
+        assert!(paginator.next_page().await.unwrap().is_none());
+
+        let first = requests.recv().unwrap();
+        let second = requests.recv().unwrap();
+        let mut expected_second = first.clone();
+        expected_second["page"]["token"] = json!("actions-2");
+        assert_eq!(second, expected_second);
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn pagination_propagates_a_malformed_page_response() {
+        let (_network, endpoint, _requests, server) = json_server(vec![json!({
+            "page": {},
+            "results": []
+        })]);
+        let client = test_client(endpoint, ApiEndpoint::ResourceSearch);
+        let request = ResourceSearchRequest::new(
+            Subject::new("user", "alice"),
+            Action::new("read"),
+            Resource::query("document"),
+        );
+
+        let error = client
+            .paginate_resources(request)
+            .unwrap()
+            .next_page()
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AuthZenError::InvalidResponse(_)));
+        server.join().unwrap();
+    }
 
     #[test]
     fn default_paths_are_appended_to_tenant_identifier() {
