@@ -112,6 +112,35 @@ if decision.allowed() {
 }
 ```
 
+### Paginated Search
+
+Use a paginator when following Search results across multiple responses. It
+keeps the original query fixed and changes only the opaque continuation token,
+as required by Authorization API 1.0.
+
+```rust,no_run
+use authzen_rs::prelude::*;
+
+async fn list_documents(client: &AuthZenClient) -> Result<Vec<Resource>, AuthZenError> {
+    let request = ResourceSearchRequest::new(
+        Subject::new("user", "alice"),
+        Action::new("read"),
+        Resource::query("document"),
+    )
+    .with_page(PageRequest::new().with_limit(100));
+
+    let mut paginator = client.paginate_resources(request)?;
+    let mut resources = Vec::new();
+    while let Some(page) = paginator.next_page().await? {
+        resources.extend_from_slice(page.results());
+    }
+    Ok(resources)
+}
+```
+
+PDP Search adapters remain responsible for binding each opaque token to its
+original query and rejecting continuation requests that change query values.
+
 ### Tower(axum) example
 
 ```rust,no_run

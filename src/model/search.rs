@@ -43,6 +43,22 @@ impl PageRequest {
         }
         self
     }
+
+    #[cfg(feature = "client")]
+    pub(crate) fn continuation(&self, token: impl Into<String>) -> Self {
+        let mut page = self.clone();
+        page.token = Some(token.into());
+        page
+    }
+}
+
+#[cfg(feature = "client")]
+fn continuation_page(page: Option<&PageRequest>, token: impl Into<String>) -> PageRequest {
+    let token = token.into();
+    match page {
+        Some(page) => page.continuation(token),
+        None => PageRequest::new().with_token(token),
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -184,6 +200,12 @@ impl SubjectSearchRequest {
         self.action.as_ref().unwrap().validate()?;
         self.resource.as_ref().unwrap().validate_identified()
     }
+    #[cfg(feature = "client")]
+    pub(crate) fn continuation(&self, token: impl Into<String>) -> Self {
+        let mut request = self.clone();
+        request.page = Some(continuation_page(request.page.as_ref(), token));
+        request
+    }
     #[cfg(all(feature = "tower", feature = "server"))]
     pub(crate) fn normalize_query(mut self) -> Self {
         self.subject.as_mut().unwrap().ignore_id();
@@ -246,6 +268,12 @@ impl ResourceSearchRequest {
         self.action.as_ref().unwrap().validate()?;
         self.resource.as_ref().unwrap().validate_query()
     }
+    #[cfg(feature = "client")]
+    pub(crate) fn continuation(&self, token: impl Into<String>) -> Self {
+        let mut request = self.clone();
+        request.page = Some(continuation_page(request.page.as_ref(), token));
+        request
+    }
     #[cfg(all(feature = "tower", feature = "server"))]
     pub(crate) fn normalize_query(mut self) -> Self {
         self.resource.as_mut().unwrap().ignore_id();
@@ -299,5 +327,11 @@ impl ActionSearchRequest {
         require(&self.resource, "resource")?;
         self.subject.as_ref().unwrap().validate_identified()?;
         self.resource.as_ref().unwrap().validate_identified()
+    }
+    #[cfg(feature = "client")]
+    pub(crate) fn continuation(&self, token: impl Into<String>) -> Self {
+        let mut request = self.clone();
+        request.page = Some(continuation_page(request.page.as_ref(), token));
+        request
     }
 }
