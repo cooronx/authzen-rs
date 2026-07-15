@@ -11,7 +11,7 @@
   <h3 align="center">authzen-rs</h3>
 
   <p align="center">
-    A Rust SDK for the OpenID AuthZEN Authorization API 1.0
+    A Rust SDK for the OpenID AuthZEN Authorization API 1.0, with Tower middleware support
     <br />
     <a href="https://github.com/cooronx/authzen-rs/issues">Report Bug</a>
     &middot;
@@ -54,7 +54,8 @@
 and framework-neutral Tower integrations for both PEP and PDP applications. It
 targets the [OpenID AuthZEN Authorization API 1.0][authzen-spec].
 
-The crate does not implement authorization policies or bind users to a policy
+> [!NOTE]
+> The crate does not implement authorization policies or bind users to a policy
 engine. Authentication of callers and JWT validation are also intentionally
 outside its scope.
 
@@ -88,12 +89,12 @@ authzen-rs = { version = "0.1.0", features = ["tower"] }
 <!-- USAGE EXAMPLES -->
 ## Usage
 
-### Client
+### Simple client example
 
 ```rust,no_run
 use authzen_rs::prelude::*;
 
-# async fn run() -> Result<(), AuthZenError> {
+async fn run() -> Result<(), AuthZenError> {
 let client = AuthZenClient::builder("https://pdp.example.com")
     .bearer_token("token")
     .discover()
@@ -109,15 +110,44 @@ let decision = client.evaluate(EvaluationRequest::new(
 if decision.allowed() {
     // Continue the protected operation.
 }
-# Ok(())
-# }
 ```
 
-Metadata discovery is strict: discovery failures and
-`policy_decision_point` mismatches are errors. Without `.discover()`, the
-client uses the standard `/access/v1/...` paths. Requests time out after five
-seconds and responses are limited to 4 MiB by default; both limits are
-configurable.
+### Tower(axum) example
+
+```rust,no_run
+async fn get_document(
+      Extension(decision): Extension<Decision>,
+  ) -> &'static str {
+      // The decision is inserted into the request extensions by AuthZenLayer.
+      "document content"
+  }
+
+  #[tokio::main]
+  async fn main() {
+      let pdp = AuthZenClient::builder("http://localhost:8080")
+          .build()
+          .await
+          .unwrap();
+
+      let authzen = AuthZenLayer::new(pdp).request_mapper(|parts: &Parts| {
+          let id = parts.uri.path().trim_start_matches("/documents/");
+
+          Ok(EvaluationRequest::new(
+              // In a real application, read the subject from a JWT or extension.
+              Subject::new("user", "alice"),
+              Action::new("read"),
+              Resource::new("document", id),
+          ))
+      });
+
+      let app = Router::new()
+          .route("/documents/{id}", get(get_document))
+          .layer(authzen);
+
+      let listener = TcpListener::bind("0.0.0.0:3000").await.unwrap();
+      axum::serve(listener, app).await.unwrap();
+}
+```
 
 ### Features
 
@@ -129,14 +159,6 @@ configurable.
 | `rustls-tls` | Rustls transport; enabled by default |
 | `native-tls` | Native TLS transport |
 | `tracing` | Internal diagnostics without exposing PDP errors to clients |
-
-### Scope and Security
-
-- HTTPS is required by the AuthZEN 1.0 binding.
-- A denied authorization is HTTP 200 with `decision: false`, not a transport error.
-- `signed_metadata` is preserved as a raw JWT, but v0.1 does not validate JWS signatures.
-- PDP implementation errors are hidden from HTTP clients by default.
-- Authentication of callers and JWT validation are intentionally outside this crate's scope.
 
 ### Runnable Examples
 
