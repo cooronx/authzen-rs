@@ -44,6 +44,8 @@ tracing = { version = "0.1.41", optional = true }
 url = { version = "2.5.7", features = ["serde"] }
 
 [dev-dependencies]
+rcgen = "0.13.2"
+rustls = { version = "0.23.35", default-features = false, features = ["ring", "std"] }
 tokio = { version = "1.48", features = ["macros", "rt-multi-thread"] }
 tower = { version = "0.5.3", features = ["util"] }
 
