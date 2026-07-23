@@ -8,9 +8,14 @@ use std::{
 
 use async_trait::async_trait;
 use authzen_rs::{
-    Decision, EvaluationRequest, SearchResponse, Subject, SubjectSearchRequest,
-    server::{PolicyDecisionPoint, SubjectSearch},
-    tower::{EvaluationService, SubjectSearchService},
+    Action, ActionSearchRequest, Decision, EvaluationRequest, EvaluationsRequest,
+    EvaluationsResponse, Resource, ResourceSearchRequest, SearchResponse, Subject,
+    SubjectSearchRequest,
+    server::{ActionSearch, PolicyDecisionPoint, ResourceSearch, SubjectSearch},
+    tower::{
+        ActionSearchService, EvaluationService, EvaluationsService, ResourceSearchService,
+        SubjectSearchService,
+    },
 };
 use bytes::Bytes;
 use http::{Request, StatusCode};
@@ -118,4 +123,128 @@ async fn pdp_errors_are_hidden_by_default() {
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     let body = response.into_body().collect().await.unwrap().to_bytes();
     assert!(!String::from_utf8_lossy(&body).contains("secret database detail"));
+}
+
+#[derive(Clone)]
+struct InvalidEvaluations;
+
+#[async_trait]
+impl PolicyDecisionPoint for InvalidEvaluations {
+    type Error = Infallible;
+
+    async fn evaluate(&self, _: EvaluationRequest) -> Result<Decision, Self::Error> {
+        Ok(Decision::new(true))
+    }
+
+    async fn evaluations(&self, _: EvaluationsRequest) -> Result<EvaluationsResponse, Self::Error> {
+        Ok(serde_json::from_value(serde_json::json!({})).unwrap())
+    }
+}
+
+#[tokio::test]
+async fn evaluations_service_hides_invalid_adapter_responses_and_echoes_request_id() {
+    let body = br#"{"subject":{"type":"user","id":"alice"},"action":{"name":"read"},"evaluations":[{"resource":{"type":"doc","id":"1"}}]}"#;
+    let request = Request::post("/")
+        .header("content-type", "application/json")
+        .header("x-request-id", "batch-123")
+        .body(Full::new(Bytes::from_static(body)))
+        .unwrap();
+    let response = EvaluationsService::new(InvalidEvaluations)
+        .oneshot(request)
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(response.headers()["x-request-id"], "batch-123");
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(
+        String::from_utf8_lossy(&body),
+        "Internal policy decision error"
+    );
+}
+
+#[derive(Clone)]
+struct InvalidSearch;
+
+#[async_trait]
+impl SubjectSearch for InvalidSearch {
+    type Error = Infallible;
+
+    async fn search_subjects(
+        &self,
+        _: SubjectSearchRequest,
+    ) -> Result<SearchResponse<Subject>, Self::Error> {
+        Ok(serde_json::from_value(serde_json::json!({
+            "results": [{"type": "user"}]
+        }))
+        .unwrap())
+    }
+}
+
+#[async_trait]
+impl ResourceSearch for InvalidSearch {
+    type Error = Infallible;
+
+    async fn search_resources(
+        &self,
+        _: ResourceSearchRequest,
+    ) -> Result<SearchResponse<Resource>, Self::Error> {
+        Ok(serde_json::from_value(serde_json::json!({
+            "results": [{"id": "1"}]
+        }))
+        .unwrap())
+    }
+}
+
+#[async_trait]
+impl ActionSearch for InvalidSearch {
+    type Error = Infallible;
+
+    async fn search_actions(
+        &self,
+        _: ActionSearchRequest,
+    ) -> Result<SearchResponse<Action>, Self::Error> {
+        Ok(serde_json::from_value(serde_json::json!({
+            "results": [{}]
+        }))
+        .unwrap())
+    }
+}
+
+fn json_request(body: &'static [u8]) -> Request<Full<Bytes>> {
+    Request::post("/")
+        .header("content-type", "application/json")
+        .header("x-request-id", "search-123")
+        .body(Full::new(Bytes::from_static(body)))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn every_search_service_rejects_invalid_adapter_results() {
+    let subject = SubjectSearchService::new(InvalidSearch)
+        .oneshot(json_request(
+            br#"{"subject":{"type":"user"},"action":{"name":"read"},"resource":{"type":"doc","id":"1"}}"#,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(subject.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(subject.headers()["x-request-id"], "search-123");
+
+    let resource = ResourceSearchService::new(InvalidSearch)
+        .oneshot(json_request(
+            br#"{"subject":{"type":"user","id":"alice"},"action":{"name":"read"},"resource":{"type":"doc"}}"#,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resource.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(resource.headers()["x-request-id"], "search-123");
+
+    let action = ActionSearchService::new(InvalidSearch)
+        .oneshot(json_request(
+            br#"{"subject":{"type":"user","id":"alice"},"resource":{"type":"doc","id":"1"}}"#,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(action.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(action.headers()["x-request-id"], "search-123");
 }

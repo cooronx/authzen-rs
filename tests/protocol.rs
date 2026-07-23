@@ -1,6 +1,7 @@
 use authzen_rs::{
-    Action, ActionSearchRequest, EvaluationRequest, EvaluationsRequest, PdpMetadata, Resource,
-    ResourceSearchRequest, Subject, SubjectSearchRequest,
+    Action, ActionSearchRequest, Decision, EvaluationOptions, EvaluationRequest,
+    EvaluationsRequest, EvaluationsResponse, EvaluationsSemantic, PageRequest, PdpMetadata,
+    Resource, ResourceSearchRequest, SearchResponse, Subject, SubjectSearchRequest,
 };
 use serde_json::json;
 
@@ -98,6 +99,184 @@ fn absent_evaluations_behaves_as_single_evaluation() {
     }))
     .unwrap();
     assert_eq!(request.resolved().unwrap().len(), 1);
+}
+
+#[test]
+fn single_compatible_evaluations_require_the_decision_shape() {
+    let request: EvaluationsRequest = serde_json::from_value(json!({
+        "subject": {"type": "user", "id": "alice"},
+        "action": {"name": "read"},
+        "resource": {"type": "doc", "id": "1"}
+    }))
+    .unwrap();
+
+    let missing: EvaluationsResponse = serde_json::from_value(json!({})).unwrap();
+    assert_eq!(missing.validate(&request).unwrap_err().path(), "decision");
+
+    let batch: EvaluationsResponse = serde_json::from_value(json!({
+        "evaluations": [{"decision": true}]
+    }))
+    .unwrap();
+    assert_eq!(batch.validate(&request).unwrap_err().path(), "decision");
+
+    let complete: EvaluationsResponse = serde_json::from_value(json!({
+        "decision": true,
+        "unknown_future_field": "ignored"
+    }))
+    .unwrap();
+    complete.validate(&request).unwrap();
+}
+
+fn batch_request(semantic: EvaluationsSemantic) -> EvaluationsRequest {
+    EvaluationsRequest::new(vec![
+        EvaluationRequest::new(
+            Subject::new("user", "alice"),
+            Action::new("read"),
+            Resource::new("doc", "1"),
+        ),
+        EvaluationRequest::new(
+            Subject::new("user", "alice"),
+            Action::new("read"),
+            Resource::new("doc", "2"),
+        ),
+        EvaluationRequest::new(
+            Subject::new("user", "alice"),
+            Action::new("read"),
+            Resource::new("doc", "3"),
+        ),
+    ])
+    .with_options(EvaluationOptions::new(semantic))
+}
+
+fn decisions(values: &[bool]) -> EvaluationsResponse {
+    EvaluationsResponse::multiple(values.iter().copied().map(Decision::new).collect())
+}
+
+#[test]
+fn execute_all_requires_one_ordered_result_per_evaluation() {
+    let request = batch_request(EvaluationsSemantic::ExecuteAll);
+    decisions(&[true, false, true]).validate(&request).unwrap();
+    assert!(decisions(&[true, false]).validate(&request).is_err());
+    assert!(
+        decisions(&[true, false, true, true])
+            .validate(&request)
+            .is_err()
+    );
+
+    let malformed: Result<EvaluationsResponse, _> = serde_json::from_value(json!({
+        "evaluations": [{"decision": true}, {}]
+    }));
+    assert!(malformed.is_err());
+}
+
+#[test]
+fn short_circuit_responses_are_non_empty_valid_prefixes() {
+    let deny = batch_request(EvaluationsSemantic::DenyOnFirstDeny);
+    decisions(&[true, false]).validate(&deny).unwrap();
+    decisions(&[true, true, true]).validate(&deny).unwrap();
+    assert!(decisions(&[]).validate(&deny).is_err());
+    assert!(decisions(&[true]).validate(&deny).is_err());
+    assert!(decisions(&[false, true]).validate(&deny).is_err());
+
+    let permit = batch_request(EvaluationsSemantic::PermitOnFirstPermit);
+    decisions(&[false, true]).validate(&permit).unwrap();
+    decisions(&[false, false, false]).validate(&permit).unwrap();
+    assert!(decisions(&[false]).validate(&permit).is_err());
+    assert!(decisions(&[true, false]).validate(&permit).is_err());
+}
+
+#[test]
+fn search_responses_validate_all_three_entity_types() {
+    let subject_request = SubjectSearchRequest::new(
+        Subject::query("user"),
+        Action::new("read"),
+        Resource::new("doc", "1"),
+    );
+    let subjects: SearchResponse<Subject> = serde_json::from_value(json!({
+        "results": [{"type": "user"}]
+    }))
+    .unwrap();
+    assert_eq!(
+        subjects.validate(&subject_request).unwrap_err().path(),
+        "subject.id"
+    );
+
+    let resource_request = ResourceSearchRequest::new(
+        Subject::new("user", "alice"),
+        Action::new("read"),
+        Resource::query("doc"),
+    );
+    let resources: SearchResponse<Resource> = serde_json::from_value(json!({
+        "results": [{"id": "1"}]
+    }))
+    .unwrap();
+    assert_eq!(
+        resources.validate(&resource_request).unwrap_err().path(),
+        "resource.type"
+    );
+
+    let action_request =
+        ActionSearchRequest::new(Subject::new("user", "alice"), Resource::new("doc", "1"));
+    let actions: SearchResponse<Action> = serde_json::from_value(json!({
+        "results": [{}]
+    }))
+    .unwrap();
+    assert_eq!(
+        actions.validate(&action_request).unwrap_err().path(),
+        "action.name"
+    );
+}
+
+#[test]
+fn search_responses_require_results_and_consistent_pagination() {
+    assert!(
+        serde_json::from_value::<SearchResponse<Resource>>(json!({
+            "page": {"next_token": ""}
+        }))
+        .is_err()
+    );
+    assert!(
+        serde_json::from_value::<SearchResponse<Resource>>(json!({
+            "page": {},
+            "results": []
+        }))
+        .is_err()
+    );
+
+    let request = ResourceSearchRequest::new(
+        Subject::new("user", "alice"),
+        Action::new("read"),
+        Resource::query("doc"),
+    )
+    .with_page(PageRequest::new().with_limit(1));
+    let count_mismatch: SearchResponse<Resource> = serde_json::from_value(json!({
+        "page": {"next_token": "", "count": 2},
+        "results": [{"type": "doc", "id": "1"}]
+    }))
+    .unwrap();
+    assert_eq!(
+        count_mismatch.validate(&request).unwrap_err().path(),
+        "page.count"
+    );
+
+    let too_many: SearchResponse<Resource> = serde_json::from_value(json!({
+        "page": {"next_token": "", "total": 1},
+        "results": [
+            {"type": "doc", "id": "1"},
+            {"type": "doc", "id": "2"}
+        ],
+        "unknown_future_field": true
+    }))
+    .unwrap();
+    assert_eq!(too_many.validate(&request).unwrap_err().path(), "results");
+
+    let valid: SearchResponse<Resource> = serde_json::from_value(json!({
+        "page": {"next_token": "", "count": 1, "total": 1, "future": true},
+        "results": [{"type": "doc", "id": "1", "future": true}],
+        "future": true
+    }))
+    .unwrap();
+    valid.validate(&request).unwrap();
 }
 
 #[test]

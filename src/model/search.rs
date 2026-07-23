@@ -101,6 +101,28 @@ impl PageResponse {
     pub fn properties(&self) -> &Map<String, Value> {
         &self.properties
     }
+
+    fn validate(&self, result_count: usize) -> Result<(), ValidationError> {
+        let result_count = u64::try_from(result_count).map_err(|_| {
+            ValidationError::new(
+                "results",
+                "result count cannot be represented by the protocol",
+            )
+        })?;
+        if self.count.is_some_and(|count| count != result_count) {
+            return Err(ValidationError::new(
+                "page.count",
+                "must equal the number of returned results",
+            ));
+        }
+        if self.total.is_some_and(|total| total < result_count) {
+            return Err(ValidationError::new(
+                "page.total",
+                "cannot be smaller than the number of returned results",
+            ));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -142,6 +164,49 @@ impl<T> SearchResponse<T> {
     pub fn with_context(mut self, context: Context) -> Self {
         self.context = Some(context);
         self
+    }
+
+    fn validate_with(
+        &self,
+        request_page: Option<&PageRequest>,
+        validate_result: impl Fn(&T) -> Result<(), ValidationError>,
+    ) -> Result<(), ValidationError> {
+        if request_page
+            .and_then(PageRequest::limit)
+            .is_some_and(|limit| {
+                u64::try_from(self.results.len()).map_or(true, |count| count > limit)
+            })
+        {
+            return Err(ValidationError::new(
+                "results",
+                "contains more items than the requested page limit",
+            ));
+        }
+        if let Some(page) = &self.page {
+            page.validate(self.results.len())?;
+        }
+        self.results.iter().try_for_each(validate_result)
+    }
+}
+
+impl SearchResponse<Subject> {
+    /// Validates a Subject Search response against its request.
+    pub fn validate(&self, request: &SubjectSearchRequest) -> Result<(), ValidationError> {
+        self.validate_with(request.page(), Subject::validate_identified)
+    }
+}
+
+impl SearchResponse<Resource> {
+    /// Validates a Resource Search response against its request.
+    pub fn validate(&self, request: &ResourceSearchRequest) -> Result<(), ValidationError> {
+        self.validate_with(request.page(), Resource::validate_identified)
+    }
+}
+
+impl SearchResponse<Action> {
+    /// Validates an Action Search response against its request.
+    pub fn validate(&self, request: &ActionSearchRequest) -> Result<(), ValidationError> {
+        self.validate_with(request.page(), Action::validate)
     }
 }
 

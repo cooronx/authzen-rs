@@ -69,7 +69,9 @@ impl AuthZenClient {
         request: EvaluationsRequest,
     ) -> Result<EvaluationsResponse, AuthZenError> {
         request.validate()?;
-        self.post(ApiEndpoint::Evaluations, &request).await
+        let response: EvaluationsResponse = self.post(ApiEndpoint::Evaluations, &request).await?;
+        response.validate(&request).map_err(invalid_pdp_response)?;
+        Ok(response)
     }
 
     pub async fn search_subjects(
@@ -77,7 +79,10 @@ impl AuthZenClient {
         request: SubjectSearchRequest,
     ) -> Result<SearchResponse<Subject>, AuthZenError> {
         request.validate()?;
-        self.post(ApiEndpoint::SubjectSearch, &request).await
+        let response: SearchResponse<Subject> =
+            self.post(ApiEndpoint::SubjectSearch, &request).await?;
+        response.validate(&request).map_err(invalid_pdp_response)?;
+        Ok(response)
     }
 
     pub async fn search_resources(
@@ -85,7 +90,10 @@ impl AuthZenClient {
         request: ResourceSearchRequest,
     ) -> Result<SearchResponse<Resource>, AuthZenError> {
         request.validate()?;
-        self.post(ApiEndpoint::ResourceSearch, &request).await
+        let response: SearchResponse<Resource> =
+            self.post(ApiEndpoint::ResourceSearch, &request).await?;
+        response.validate(&request).map_err(invalid_pdp_response)?;
+        Ok(response)
     }
 
     pub async fn search_actions(
@@ -93,7 +101,10 @@ impl AuthZenClient {
         request: ActionSearchRequest,
     ) -> Result<SearchResponse<Action>, AuthZenError> {
         request.validate()?;
-        self.post(ApiEndpoint::ActionSearch, &request).await
+        let response: SearchResponse<Action> =
+            self.post(ApiEndpoint::ActionSearch, &request).await?;
+        response.validate(&request).map_err(invalid_pdp_response)?;
+        Ok(response)
     }
 
     async fn post<T: Serialize + ?Sized, R: DeserializeOwned>(
@@ -147,6 +158,10 @@ impl AuthZenClient {
         serde_json::from_slice(&bytes)
             .map_err(|error| AuthZenError::InvalidResponse(error.to_string()))
     }
+}
+
+fn invalid_pdp_response(error: crate::ValidationError) -> AuthZenError {
+    AuthZenError::InvalidResponse(error.to_string())
 }
 
 #[async_trait]

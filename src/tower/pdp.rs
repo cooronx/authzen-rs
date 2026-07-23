@@ -154,8 +154,15 @@ where
                     request_id,
                 ));
             }
+            let validation_request = request.clone();
             match pdp.evaluations(request).await {
-                Ok(decisions) => Ok(json_response(StatusCode::OK, &decisions, request_id)),
+                Ok(decisions) => match decisions.validate(&validation_request) {
+                    Ok(()) => Ok(json_response(StatusCode::OK, &decisions, request_id)),
+                    Err(error) => {
+                        log_internal(&error);
+                        Ok(invalid_adapter_response(request_id))
+                    }
+                },
                 Err(error) => {
                     log_internal(&error);
                     Ok(map_pdp_error(error_mapper.as_ref(), &error, request_id))
@@ -197,8 +204,15 @@ macro_rules! impl_search_service {
                         ));
                     }
                     let request = ($normalize)(request);
+                    let validation_request = request.clone();
                     match pdp.$method(request).await {
-                        Ok(results) => Ok(json_response(StatusCode::OK, &results, request_id)),
+                        Ok(results) => match results.validate(&validation_request) {
+                            Ok(()) => Ok(json_response(StatusCode::OK, &results, request_id)),
+                            Err(error) => {
+                                log_internal(&error);
+                                Ok(invalid_adapter_response(request_id))
+                            }
+                        },
                         Err(error) => {
                             log_internal(&error);
                             Ok(map_pdp_error(error_mapper.as_ref(), &error, request_id))
@@ -383,6 +397,14 @@ fn map_pdp_error(
         response.headers_mut().insert(REQUEST_ID, value);
     }
     response
+}
+
+fn invalid_adapter_response(request_id: Option<HeaderValue>) -> Response<AuthZenBody> {
+    text_response(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Internal policy decision error",
+        request_id,
+    )
 }
 
 fn log_internal(error: &dyn std::error::Error) {

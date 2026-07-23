@@ -12,8 +12,8 @@ use std::{
 };
 
 use authzen_rs::{
-    Action, ActionSearchRequest, AuthZenError, EvaluationRequest, PageRequest, Resource,
-    ResourceSearchRequest, Subject, SubjectSearchRequest,
+    Action, ActionSearchRequest, AuthZenError, EvaluationRequest, EvaluationsRequest, PageRequest,
+    Resource, ResourceSearchRequest, Subject, SubjectSearchRequest,
     client::{ApiEndpoint, AuthZenClient},
 };
 use rcgen::generate_simple_self_signed;
@@ -313,6 +313,64 @@ async fn pagination_propagates_a_malformed_page_response() {
         .await
         .unwrap_err();
     assert!(matches!(error, AuthZenError::InvalidResponse(_)));
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn client_rejects_a_semantically_invalid_evaluations_response() {
+    let (_network, endpoint, http, _requests, server) = json_server(vec![json!({
+        "evaluations": [{"decision": true}]
+    })]);
+    let client = test_client(&endpoint, http, ApiEndpoint::Evaluations).await;
+    let request: EvaluationsRequest = serde_json::from_value(json!({
+        "subject": {"type": "user", "id": "alice"},
+        "action": {"name": "read"},
+        "resource": {"type": "document", "id": "1"}
+    }))
+    .unwrap();
+
+    let error = client.evaluations(request).await.unwrap_err();
+    assert!(matches!(error, AuthZenError::InvalidResponse(_)));
+    server.join().unwrap();
+}
+
+#[tokio::test]
+async fn client_rejects_incomplete_entities_from_every_search_endpoint() {
+    let (_network, endpoint, http, _requests, server) = json_server(vec![
+        json!({"results": [{"type": "user"}]}),
+        json!({"results": [{"id": "1"}]}),
+        json!({"results": [{}]}),
+    ]);
+    let client = test_client(&endpoint, http, ApiEndpoint::SubjectSearch).await;
+
+    let subject_error = client
+        .search_subjects(SubjectSearchRequest::new(
+            Subject::query("user"),
+            Action::new("read"),
+            Resource::new("document", "1"),
+        ))
+        .await
+        .unwrap_err();
+    assert!(matches!(subject_error, AuthZenError::InvalidResponse(_)));
+
+    let resource_error = client
+        .search_resources(ResourceSearchRequest::new(
+            Subject::new("user", "alice"),
+            Action::new("read"),
+            Resource::query("document"),
+        ))
+        .await
+        .unwrap_err();
+    assert!(matches!(resource_error, AuthZenError::InvalidResponse(_)));
+
+    let action_error = client
+        .search_actions(ActionSearchRequest::new(
+            Subject::new("user", "alice"),
+            Resource::new("document", "1"),
+        ))
+        .await
+        .unwrap_err();
+    assert!(matches!(action_error, AuthZenError::InvalidResponse(_)));
     server.join().unwrap();
 }
 

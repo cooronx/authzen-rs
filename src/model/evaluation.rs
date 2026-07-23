@@ -224,4 +224,86 @@ impl EvaluationsResponse {
     pub fn context(&self) -> Option<&Context> {
         self.context.as_ref()
     }
+
+    /// Validates that this response has the shape and result sequence required
+    /// by the corresponding evaluations request.
+    pub fn validate(&self, request: &EvaluationsRequest) -> Result<(), ValidationError> {
+        if request.evaluations().is_empty() {
+            if self.decision.is_none() {
+                return Err(ValidationError::new(
+                    "decision",
+                    "a single-compatible response requires a decision",
+                ));
+            }
+            if !self.evaluations.is_empty() {
+                return Err(ValidationError::new(
+                    "evaluations",
+                    "a single-compatible response must use the Decision shape",
+                ));
+            }
+            return Ok(());
+        }
+
+        if self.decision.is_some() || self.context.is_some() {
+            return Err(ValidationError::new(
+                "decision",
+                "a batch response must use the evaluations array",
+            ));
+        }
+
+        let expected = request.evaluations().len();
+        let actual = self.evaluations.len();
+        if actual == 0 {
+            return Err(ValidationError::new(
+                "evaluations",
+                "a batch response requires at least one decision",
+            ));
+        }
+        if actual > expected {
+            return Err(ValidationError::new(
+                "evaluations",
+                "response contains more decisions than the request",
+            ));
+        }
+
+        match request.semantic() {
+            EvaluationsSemantic::ExecuteAll if actual != expected => Err(ValidationError::new(
+                "evaluations",
+                "execute_all requires one decision per evaluation",
+            )),
+            EvaluationsSemantic::DenyOnFirstDeny => {
+                validate_short_circuit(&self.evaluations, expected, false)
+            }
+            EvaluationsSemantic::PermitOnFirstPermit => {
+                validate_short_circuit(&self.evaluations, expected, true)
+            }
+            EvaluationsSemantic::ExecuteAll => Ok(()),
+        }
+    }
+}
+
+fn validate_short_circuit(
+    evaluations: &[Decision],
+    expected: usize,
+    terminal_decision: bool,
+) -> Result<(), ValidationError> {
+    let (last, preceding) = evaluations
+        .split_last()
+        .expect("batch response was checked as non-empty");
+    if preceding
+        .iter()
+        .any(|decision| decision.allowed() == terminal_decision)
+    {
+        return Err(ValidationError::new(
+            "evaluations",
+            "response continued after the short-circuit decision",
+        ));
+    }
+    if evaluations.len() < expected && last.allowed() != terminal_decision {
+        return Err(ValidationError::new(
+            "evaluations",
+            "a partial response must end with the short-circuit decision",
+        ));
+    }
+    Ok(())
 }
